@@ -1,0 +1,330 @@
+---
+title: "Cosa rende le persone felici??"
+author: "Francesco Marchetto"
+date: '2022-07-08'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Librerie ed importazione
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+Happiness <- read.csv("2019.csv")
+
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(lubridate)
+library(corrgram)    
+library(corrplot)
+library(ggplot2)
+library(reshape2)
+library(ggthemes)
+library(reshape2)
+library(data.table)
+library(modelr)
+library(GGally)
+library(plotly)
+
+```
+
+# Ordinamento
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Creo una colonna Continent per poi fare delle osservazioni
+
+Happiness$Continente <- NA
+
+#Cambio nome alle colonne per chiarezza
+
+names(Happiness)[names(Happiness) == 'Country.or.region'] <- 'Stato'
+names(Happiness)[names(Happiness) == 'Freedom.to.make.life.choices'] <- 'Libertà'
+names(Happiness)[names(Happiness) == 'Healthy.life.expectancy'] <- 'AspettativaDiVita'
+names(Happiness)[names(Happiness) == 'Perceptions.of.corruption'] <- 'IndicePercCorruzione'
+names(Happiness)[names(Happiness) == 'Social.support'] <- 'SupportoSociale'
+names(Happiness)[names(Happiness) == 'Generosity'] <- 'Generosità'
+names(Happiness)[names(Happiness) == 'Score'] <- 'Punteggio'
+
+#Non ho trovato funzioni che raggruppassero per continente, definisco un vettore con gli stati appartenenti a ciascuno
+
+Happiness$Continente[which(Happiness$Stato %in% c("Israel", "United Arab Emirates", "Singapore", "Thailand", "Taiwan Province of China", "Qatar", "Saudi Arabia", "Kuwait", "Bahrain", "Malaysia", "Uzbekistan", "Japan","South Korea", "Turkmenistan", "Kazakhstan", "Turkey", "Hong Kong S.A.R., China", "Philippines","Jordan", "China", "Pakistan", "Indonesia", "Azerbaijan", "Lebanon", "Vietnam","Tajikistan", "Bhutan", "Kyrgyzstan", "Nepal", "Mongolia", "Palestinian Territories","Iran", "Bangladesh", "Myanmar", "Iraq", "Sri Lanka", "Armenia", "India", "Georgia","Cambodia", "Afghanistan", "Yemen", "Syria"))] <- "Asia"
+
+Happiness$Continente[which(Happiness$Stato %in% c("Norway", "Denmark", "Iceland", "Switzerland","Finland","Netherlands", "Sweden", "Austria", "Ireland", "Germany","Belgium", "Luxembourg", "United Kingdom", "Czech Republic","Malta", "France", "Spain", "Slovakia", "Poland", "Italy",
+"Russia", "Lithuania", "Latvia", "Moldova", "Romania","Slovenia", "North Cyprus", "Cyprus", "Estonia", "Belarus","Serbia", "Hungary", "Croatia", "Kosovo", "Montenegro","Greece", "Portugal", "Bosnia and Herzegovina", "Macedonia","Bulgaria", "Albania", "Ukraine"))] <- "Europa"
+
+Happiness$Continente[which(Happiness$Stato %in% c("Canada", "Costa Rica", "United States", "Mexico",  
+"Panama","Trinidad and Tobago", "El Salvador", "Belize", "Guatemala","Jamaica", "Nicaragua", "Dominican Republic", "Honduras","Haiti"))] <- "Nord America"
+
+Happiness$Continente[which(Happiness$Stato %in% c("Chile", "Brazil", "Argentina", "Uruguay","Colombia", "Ecuador", "Bolivia", "Peru","Paraguay", "Venezuela"))] <- "Sud America"
+
+Happiness$Continente[which(Happiness$Stato %in% c("New Zealand", "Australia"))] <- "Australia"
+Happiness$Continente[which(is.na(Happiness$Continent))] <- "Africa"
+
+# sposto la colonna continente affianco allo stato e la rendo fattore per poterci operare
+
+Happiness <- Happiness %>% select(Stato,Continente, everything())
+Happiness$Continente <- as.factor(Happiness$Continente)
+
+```
+
+# Quali sono gli stati più felici?
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# Quali sono gli stati più felici? sono già in ordine prendo i primi 5
+Happiness %>%
+  slice(1:5) %>%
+  ggplot(aes(x = Stato, y = Punteggio , fill = Stato)) +
+    geom_bar(stat = "identity") + theme_clean() +
+    labs(title='Top 5 stati più felici')+
+    theme(plot.title=element_text(size=20, hjust=0.5, face='bold'))+
+    theme(axis.title = element_text(family = "Helvetica", size = (8)))
+```
+
+# Quale è il Continente più felice?
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+plot_ly(Happiness,x=~Continente,
+        y=~Punteggio,
+        type="box",
+        boxpoints="all",
+        pointpos = -1.8,
+        color=~Continente) %>%
+  layout(xaxis=list(showticklabels = FALSE),
+         margin=list(b = 100))
+
+
+# come mai in nord america un paese è cosi tanto sotto la media?
+
+Happiness %>%
+  filter(Continente == "Nord America") %>%
+  arrange(Punteggio) %>%
+  slice(1)
+
+# haiti, paese devastato da terremoti, uragani, criminalità, povertà, classe politica, presidente assassinato
+
+library(rworldmap)
+
+df <- data.frame(
+  country=Happiness$Stato,
+  value=Happiness$Punteggio)
+
+Mappa <- joinCountryData2Map(df, joinCode="NAME", nameJoinColumn="country")
+mapCountryData(Mappa, nameColumnToPlot="value", mapTitle="Mappa globale per Felicità",colourPalette=c("white","green"))
+```
+
+
+# Quale è la correlazione tra i fattori che contribuiscono alla felicità?
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# correlazione tra le colonne numeriche
+
+# se prendessimo anche il rank avremmo delle correlazioni ovvie, piu basso è il rank più alto sarà lo score e quindi porta ad una correlazione inversa scontata, analizziamo le altre variabili
+
+correlazione1 = cor(Happiness[c(4:10)])
+corrplot(correlazione1, method = "ellipse")
+
+
+
+# risultato
+# come possiamo notare l'economia e l'aspettativa di vita (salute) e il supporto sociale giocano un ruolo importante nel contribuire alla felicità
+```
+
+
+Le variabili più significative sembrano essere l'aspettativa di vita, il fattore economico e il supporto sociale/familiare, creiamo dei modelli per ciascuno
+
+# MODELLO PER GDP.PER.CAPITA
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# analizzo quanto influenzano le variabili esplicative sul punteggio totale
+
+ggplot(Happiness, aes(x = GDP.per.capita, y = Punteggio)) + geom_point()
+
+mod1 = lm(Punteggio ~ GDP.per.capita, data = Happiness)
+
+summary(mod1) # r^2 0.63
+
+mod1$coefficients
+
+# risultato deludente 0.6 circa r^2
+
+# To visualise a model, it is very useful to be able to generate 
+# an evenly spaced grid of points from the data
+(grid <- data_grid(Happiness, GDP.per.capita))
+
+# add values predicted by the model over the grid
+(grid <- add_predictions(grid, mod1))
+
+# plot both observed and predicted values
+ggplot(Happiness, aes(x = GDP.per.capita)) +
+  geom_point(aes(y = Punteggio, color = GDP.per.capita), shape = 20, size = 3) + # observed values
+  geom_line(data = grid, mapping = aes(y = pred), colour = "blue") # predicted values
+
+ggplot(Happiness, aes(x = GDP.per.capita)) +
+  geom_point(aes(y = Punteggio, color = Continente), shape = 20, size = 3) +
+  labs(colour="Continente")+# observed values
+  geom_line(data = grid, mapping = aes(y = pred), colour = "blue") 
+
+# add predictions to the model
+(HappinessM <- add_predictions(Happiness, mod1))
+
+# add residuals to the model
+(HappinessM <- add_residuals(Happiness, mod1))
+
+# histogram of residuals (mean is always 0)
+ggplot(HappinessM, aes(resid)) + 
+  geom_freqpoly(binwidth = 0.5)
+
+# scatterplot of residuals (plot residuals as outcomes)
+ggplot(HappinessM, aes(GDP.per.capita, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() 
+```
+
+# MODELLO PER ASPETTATIVA DI VITA
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+ggplot(Happiness, aes(x = AspettativaDiVita, y = Punteggio)) + geom_point()
+
+mod2 = lm(Punteggio ~ AspettativaDiVita, data = Happiness)
+
+summary(mod2) # 0,6
+
+mod2$coefficients
+
+# risultato deludente 0.6 circa r^2
+
+# To visualise a model, it is very useful to be able to generate 
+# an evenly spaced grid of points from the data
+(grid2 <- data_grid(Happiness, AspettativaDiVita))
+
+# add values predicted by the model over the grid
+(grid2 <- add_predictions(grid2, mod2))
+
+# plot both observed and predicted values
+ggplot(Happiness, aes(x = AspettativaDiVita)) +
+  geom_point(aes(y = Punteggio, color = AspettativaDiVita ), shape = 20, size = 3) + # observed values
+  geom_line(data = grid2, mapping = aes(y = pred), colour = "blue") # predicted values
+
+ggplot(Happiness, aes(x = AspettativaDiVita)) +
+  geom_point(aes(y = Punteggio, color = Continente ), shape = 20, size = 3) + 
+    labs(colour="Continente")+# observed values
+  geom_line(data = grid2, mapping = aes(y = pred), colour = "blue")
+
+# add predictions to the model
+(HappinessM2 <- add_predictions(Happiness, mod2))
+
+# add residuals to the model
+(HappinessM2 <- add_residuals(Happiness, mod2))
+
+# histogram of residuals (mean is always 0)
+ggplot(HappinessM2, aes(resid)) + 
+  geom_freqpoly(binwidth = 0.5)
+
+# scatterplot of residuals (plot residuals as outcomes)
+ggplot(HappinessM2, aes(AspettativaDiVita, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() 
+```
+
+# MODELLO PER SUPPORTO SOCIALE
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+ggplot(Happiness, aes(x = SupportoSociale, y = Punteggio)) + geom_point()
+
+mod3 = lm(Punteggio ~ SupportoSociale, data = Happiness)
+
+summary(mod3) # 0,6
+
+mod3$coefficients
+
+# risultato deludente 0.6 circa r^2
+
+# To visualise a model, it is very useful to be able to generate 
+# an evenly spaced grid of points from the data
+(grid3 <- data_grid(Happiness, SupportoSociale))
+
+# add values predicted by the model over the grid
+(grid3 <- add_predictions(grid3, mod3))
+
+# plot both observed and predicted values
+ggplot(Happiness, aes(x = SupportoSociale)) +
+  geom_point(aes(y = Punteggio, color = SupportoSociale), shape = 20, size = 3) + # observed values
+  geom_line(data = grid3, mapping = aes(y = pred), colour = "blue") # predicted values
+
+ggplot(Happiness, aes(x = SupportoSociale)) +
+  geom_point(aes(y = Punteggio, color = Continente), shape = 20, size = 3) +
+      labs(colour="Continente")+# observed values
+  geom_line(data = grid3, mapping = aes(y = pred), colour = "blue")
+
+
+# add predictions to the model
+(HappinessM3 <- add_predictions(Happiness, mod3))
+
+# add residuals to the model
+(HappinessM3 <- add_residuals(Happiness, mod3))
+
+# histogram of residuals (mean is always 0)
+ggplot(HappinessM3, aes(resid)) + 
+  geom_freqpoly(binwidth = 0.5)
+
+# scatterplot of residuals (plot residuals as outcomes)
+ggplot(HappinessM3, aes(SupportoSociale, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() 
+```
+
+#Correlazione per GDP, salute, supporto sociale
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cor_data<-Happiness[,c(5,6,7)]
+cor(cor_data)
+plot(cor_data)
+ggpairs(cor_data)
+
+
+```
+## Il risultato è che il fattore economico, aspettativa di vita è il supporto sociale/familiare giocano un ruolo importante, analizziamo per ciascun continente quanto impattano
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(subset(Happiness, Happiness$Continente != "Australia"), aes(x = AspettativaDiVita, y = Punteggio)) + 
+  geom_point(aes(color=Continente), size = 3, alpha = 0.8) +  
+  geom_smooth(aes(color = Continente, fill = Continente), 
+              method = "lm", fullrange = TRUE) +
+  facet_wrap(~Continente) +
+  theme_bw() + labs(title = "Scatter plot plot con linea di regressione")+
+  theme(plot.title=element_text(size=15, hjust=0.5, face='bold'))
+# la correlazione tra il punteggio e l'aspettativa di vita è piu alta  in euopa, nord,america, ed asia
+
+ggplot(subset(Happiness, Happiness$Continente != "Australia"), aes(x = GDP.per.capita, y = Punteggio)) + 
+  geom_point(aes(color=Continente), size = 3, alpha = 0.8) +  
+  geom_smooth(aes(color = Continente, fill = Continente), 
+              method = "lm", fullrange = TRUE) +
+  facet_wrap(~Continente) +
+  theme_bw() + labs(title = "Scatter plot plot con linea di regressione")+
+  theme(plot.title=element_text(size=15, hjust=0.5, face='bold'))
+
+# Per le variabili viste prima la tendenza è simile anche se più marcata in europa/nordamerica, analizziamo le altre per trarne delle conclusioni!
+
+ggplot(subset(Happiness, Happiness$Continente != "Australia"), aes(x = IndicePercCorruzione, y = Punteggio)) + 
+  geom_point(aes(color=Continente), size = 3, alpha = 0.8) +  
+  geom_smooth(aes(color = Continente, fill = Continente), 
+              method = "lm", fullrange = TRUE) +
+  facet_wrap(~Continente) +
+  theme_bw() + labs(title = "Scatter plot con linea di regressione")+
+  theme(plot.title=element_text(size=15, hjust=0.5, face='bold'))
+
+ggplot(subset(Happiness, Happiness$Continente != "Australia"), aes(x = Generosità, y = Punteggio)) + 
+  geom_point(aes(color=Continente), size = 3, alpha = 0.8) +  
+  geom_smooth(aes(color = Continente, fill = Continente), 
+              method = "lm", fullrange = TRUE) +
+  facet_wrap(~Continente) +
+  theme_bw() + labs(title = "Scatter plot con linea di regressione")+
+  theme(plot.title=element_text(size=15, hjust=0.5, face='bold'))
+```
+Come mai in Africa la linea di regressione tende verso il basso rispetto alle altre?
+
+
+
+
